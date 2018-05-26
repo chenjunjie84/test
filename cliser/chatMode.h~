@@ -1,0 +1,28 @@
+#ifndef CHATVIEW_H
+#define CHATVIEW_H
+#include <iostream>
+#include <string>
+#include <string.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <pthread.h>
+#include <string.h>
+#include <json/json.h>
+#include <time.h>
+#include "public.h"
+#include <queue>
+#include <utility>
+#include <semaphore.h>
+
+using namespace std;
+sem_t sem1;
+queue<pair<string,string> > vecChat;
+volatile int signch = 0;
+void talkFriend(int fd);
+class ChatView
+{
+public:
+	void run(int fd);
+	void fun(int fd);
+};
+#endif

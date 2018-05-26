@@ -1,0 +1,31 @@
+#ifndef LOGINVIEW_H
+#define LOGINVIEW_H
+#include "mysqlserver.h"
+#include "view.h"
+#include <string>
+#include <vector>
+using namespace std;
+extern CMySqlServer gMySqlServer;
+extern sem_t sem;
+class LoginModel 
+{
+public:
+    bool checkUserAuth(string name, string pwd);
+    void addUserSocketInfo(string name, int fd);
+    vector<string> getUserOfflinemsg(string name);
+};
+
+class LoginView : public View
+{
+public:
+    void process(Json::Value &root);
+    void response();
+private:
+    string _name;
+    string _pwd;
+    LoginModel _loginModel;
+    bool _bloginState;
+    static int _testCount;
+};
+
+#endif

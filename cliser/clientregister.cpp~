@@ -1,0 +1,65 @@
+#include"clientregister.h"
+#include<stdio.h>
+#include<string.h>
+volatile int stateCode = 0;
+
+void *RecvMsg(void *arg)
+{
+	int sockfd = (int)arg;
+	Json::Reader reader;
+	Json::Value root;
+	char buf[500] = "";
+	string buff;
+	char str[] = "ok";
+	char str1[] = "User name already exists !";
+	while (1)
+	{
+		recv(sockfd, buf, sizeof(buf), 0);
+		if (reader.parse(buf, root))
+			buff = root["statemsg"].asString();
+		cout << buff << endl;
+
+	    if(strcmp(buff.c_str(),str)==0||strcmp(buff.c_str(),str1)==0)
+		{
+			stateCode = 1;
+			break;
+		}
+	}
+}
+void *Timelimit(void *arg)
+{
+	sleep(2);
+	printf("Please enter a verification code<Quit in 60s>:");
+	fflush(stdout);
+	for (int i = 60; i >= 0; i--)
+	{
+		if(stateCode == 1)
+			return NULL;
+		sleep(1);
+	}
+	printf("request timeout !\n");
+	sleep(1);
+}
+void *doThing(void *arg)
+{
+	int sockfd = (int)arg;
+	Json::Value Send;
+	int Code = 0;
+
+	cout << endl;
+	cin >> Code;
+	Send["checkCode"] = Code;
+	send(sockfd, Send.toStyledString().c_str(),
+		strlen(Send.toStyledString().c_str()) + 1, 0);
+}
+void ptheadfun(int fd)
+{
+	pthread_t id[3];
+	pthread_create(&id[0], NULL, RecvMsg, (void *)fd);
+	pthread_create(&id[1], NULL, Timelimit, NULL);
+	pthread_create(&id[2], NULL, doThing, (void *)fd);
+
+	pthread_join(id[1], NULL);
+	pthread_join(id[0], NULL);
+	pthread_join(id[2], NULL);
+}

@@ -1,0 +1,51 @@
+#include "friendview.h"
+extern sem_t sem;
+extern void getSendName(int fd,char *name);
+void FriendView::process(Json::Value &root)
+{
+	string name  = root["name"].asString();
+	char sql[1024]={0};
+ 	sprintf(sql, "select * from user;");
+	sem_wait(&sem);
+    	if(mysql_real_query(gMySqlServer.mpcon,sql,strlen(sql)))
+	{
+		response["type"] = 5;
+		response["message"] = "Add failed !";
+		send(_clientfd, response.toStyledString().c_str(),1024, 0);
+	}
+    	gMySqlServer.mpres = mysql_store_result(gMySqlServer.mpcon);
+	sem_post(&sem);
+    	while(gMySqlServer.mrow = mysql_fetch_row(gMySqlServer.mpres))
+   	{
+        	if(strcmp(name.c_str(), gMySqlServer.mrow[0]) == 0)
+        	{
+			char sql1[1024] = { 0 };
+			char username[1024] = { 0 };
+			getSendName(_clientfd,username);
+           		sprintf(sql, "insert into %s values(%s,0)", username,name.c_str());
+    			if(mysql_real_query(gMySqlServer.mpcon,sql1,strlen(sql1)))
+    			{
+        			response["type"] = 5;
+				response["message"] = "Add success!";
+				send(_clientfd, response.toStyledString().c_str(),1024, 0);	
+				return ;	
+    			}
+        	}
+    	}
+	response["type"] = 5;
+	response["message"] = "This user does not exist !";
+	send(_clientfd, response.toStyledString().c_str(),1024, 0);
+}
+void FriendView::response()
+{
+
+}
+void GroupView::process(Json::Value &root)
+{
+	
+}
+void GroupView::response
+{
+					  
+}
+

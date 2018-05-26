@@ -1,0 +1,462 @@
+#include "chatMode.h"
+
+sem_t sem1;
+queue<pair<string,string> > vecChat;
+queue<string> ve;
+volatile int signch = 0;
+volatile int gg = 0;
+char recvName[100] = { 0 };
+char recvName_[100] = { 0 };
+char filename_[100] = { 0 };
+volatile int size = 0;
+volatile int fr = 0;
+void handle(char *name,char *message)
+{
+	char arr[] = "send to ";
+	int len = strlen(arr),i = 0,j = 0,k = 0;
+	for(char *p = name + len ; *p != '\0'; p++ ,i++ )
+	{
+		if(*p != ':'&&j == 0)
+			name[i] = *p;
+		else if(*p == ':'&&j == 0)
+		{
+			name[i] = '\0';
+			j = 1;
+		}
+		else
+			message[k++] = *p; 
+	}
+	message[k] = '\0';
+}
+
+void organization(string name, string message, char *arr)
+{
+	const char *p = name.c_str();
+	const char *s = message.c_str();
+	int i = 0;
+	for(int j = 0; *s != '\0'; i++)
+	{
+		if(*p != '\0')
+			arr[i] = *p++;
+		else if(*p == '\0'&&j == 0)
+		{
+			arr[i] = ':';
+			j = 1;
+		}
+		else arr[i] = *s++;
+	}
+	arr[i] = '\0';
+}
+char *timefun(char *buff)
+{
+	time_t timer;
+	struct tm *tblock;
+	timer = time(NULL);
+	tblock = localtime(&timer);
+	strcpy(buff,asctime(tblock));
+	char *p = &buff[0];
+	char str[500] = { 0 };
+	str[0] = '[';
+	int i = 0,j = 1;
+	for(;p[i]!='\0';i++,j++)
+		str[j] = p[i];
+	str[--j] = ']';
+	str[++j] = ' ';
+	str[++j] = '\0';
+	strcpy(buff,str);
+	return buff;
+}
+
+void findvecChat()
+{
+	int len = vecChat.size();
+	char arr[1024] = { 0 };
+	for(int i = 0; i < len; i++)
+	{
+		sem_wait(&sem1);
+		organization((vecChat.front()).first,(vecChat.front()).second,arr);
+		cout << arr <<endl;
+		vecChat.pop();
+		sem_post(&sem1);
+		memset(arr,0,1024);
+	}
+}
+void findve()
+{
+	if(ve.size() == 0)
+		return;
+	
+	
+	while(ve.size())
+	{
+		sem_wait(&sem1);
+		cout << ve.front();
+		 ve.pop();
+		sem_post(&sem1);
+		cout <<"333"<<endl;
+	}
+
+}
+void talkFriend(int fd,char *name)
+{
+	if(strlen(name) > 127)
+	{
+		cout <<"The input length is too long. Please re-enter!"<<endl;
+		return ;
+	}
+	char buff1[500] = { 0 };
+	char message[128] = { 0 };
+	memset(message,0,128);
+	handle(name,message);
+	memset(buff1,0,500);
+	timefun(buff1);
+	strcat(buff1,name);
+	Json::Value response;
+	string _message = message;
+	response["msgtype"] = MSG_TYPE_TALK;
+	response["select"] = 0;
+	response["type"] = 1;
+	response["name"] = buff1;
+	response["message"] = _message;
+	send(fd, response.toStyledString().c_str(),
+		1024, 0);
+}
+bool judgegroup(char *name,char *message)
+{
+	char arr[1024] = { 0 };
+	int i = 1,sign = 0,i1 = 0;
+	for (; i < strlen(name); i++)
+	{
+		
+		if (name[i] != ']')
+			arr[i1++] = name[i];
+		
+		else
+		{
+			sign = 1;
+			break;
+		}
+	}
+	arr[i1] = '\0';
+	int sign1 = 0;
+	char str[1024] = { 0 };
+	int k = 0;
+	for (int j = 0; j < strlen(name); j++)
+	{
+		if (name[j] == ':'&&sign1 == 0)
+		{
+			sign1 =  1;
+			continue;
+		}
+		if (sign1 == 1)
+		{
+			str[k++] = name[j];
+		}
+	}
+	str[k] = '\0';
+	if (sign == 1&& sign1 == 1)
+	{
+		memset(name,0,strlen(name));
+		strcpy(message, str);
+		strcpy(name, arr);
+		return true;
+	}
+	else
+		return false;
+}
+
+void talkgroup(int fd, char *name)
+{
+	Json::Value response;
+	char _time[1024] = { 0 };
+	timefun(_time);
+	cout <<"_time:"<<_time <<endl;
+	char message[1024] = { 0 };
+	if(judgegroup(name,message))
+	{
+		response["msgtype"] = MSG_TYPE_TALK;
+		response["select"] = 4;
+		response["message"] = message;
+		response["time"] = _time;
+		response["group"] = name;
+		send(fd, response.toStyledString().c_str(),1024, 0);
+	}
+	else
+		cout <<"Wrong input format !"<<endl;
+	
+}
+void ChatView::run(int fd)
+{
+	cout <<endl<<endl<<"*****************Chat*******************"<<endl;
+	cout <<"message   send to ***(friend name)      "<<endl;
+	cout <<"          (group name)                  "<<endl;
+	cout <<"display(1.online friends  2.all friends)"<<endl;
+	cout <<"file      Send ***(File path) to ***    "<<endl;
+	cout <<"****************************************"<<endl;
+}
+void Division(char *name,char *buff);
+
+
+void *fun_(void* arg)
+{
+	int fd = (int)arg;
+	char buff[1024] = { 0 };
+	string message;
+	string name;
+	Json::Reader reader;
+	Json::Value root;
+	Json::Value response;
+	int type = 0;
+	char arr[1024] = { 0 };
+	while(1)
+	{
+		if(gg == 1)
+			break;
+
+		recv(fd,buff,1024,0);
+		if (reader.parse(buff, root))
+		{
+			type = root["type"].asInt();
+			if(type == 1)
+			{
+				message = root["message"].asString();
+				name = root["name"].asString();
+				organization(name, message, arr);
+				cout << arr << endl;
+				memset(arr,0,1024);
+			}
+			if(type == 2)
+			{
+				int state = root["state"].asInt();
+				if(state == 1)
+				{
+					message = root["message"].asString();
+					size = root["size"].asInt();
+					name = root["name"].asString();
+					strcpy(recvName,name.c_str());
+					char mess[100] = { 0 };
+					strcpy(mess,name.c_str());
+					strcat(strcat(mess," "),message.c_str());
+					memset(filename_,0,100);
+	
+					char message_[100] = { 0 };
+					strcpy(message_,message.c_str());
+					Division(message_,filename_);
+					
+					cout << mess << endl;	
+					cout << "file size:"<< size << endl;
+					cout <<"Whether to receive?"<<endl;
+					cout <<"0.NO       1.Yes   "<<endl;
+					continue;
+				}
+				if(state == 3)
+				{
+					Json::Value response;
+					char str1[100] = "user refused !";
+					char str2[100] = "User agrees to accept!";
+					name = root["name"].asString();
+					if(strncmp(name.c_str(),str2,strlen(str2)) == 0)
+					{
+						response["msgtype"] = MSG_TYPE_TALK;
+						response["select"] = 1;
+						response["state"] = 2;
+						response["name"] = recvName_;
+						response["size"] = size;
+						send(fd,response.toStyledString().c_str(),1024,0);
+
+						int num = 0;
+						char data1[1024] = { 0 };
+						Json::Value rot;
+						while((num = read(fr,data1,1024)) > 0)
+						{
+							rot["text"] = data1;
+							send(fd,rot.toStyledString().c_str() ,1024, 0);
+						}
+						close(fr);
+						continue;
+					}
+					else
+					{
+						cout << name << endl;
+						continue;
+					}
+				}
+				if(state == 2)
+				{
+					int fr1 = open(filename_,O_WRONLY|O_CREAT,0600);
+					assert(fr1!=-1);
+
+					int n = 0;
+					Json::Value root1;
+					string text;
+					int i = 0;
+					char recvbuff[1024] = { 0 };
+					int sum = 0;
+					while(sum < size)
+					{
+						recv(fd,recvbuff,1024,0);
+						if(reader.parse(recvbuff,root1))
+						text = root1["text"].asString();
+						n = strlen(text.c_str());
+						sum += n;
+						write(fr1,text.c_str(),n);
+					}
+					printf("下载完成!\n");
+					close(fr1);
+					memset(filename_,0,100);
+					continue;
+				}
+			}
+			if(type == 3)
+			{
+				string messa = root["online"].asString();
+				cout << messa << endl;
+			}
+			if(type == 4)
+			{
+				string messa = root["all"].asString();
+				cout << messa << endl;
+			}
+			memset(buff,0,1024);
+		}
+		message.clear();name.clear();
+		memset(buff,0,1024);
+	}
+}
+																
+void *threadDoing_(int fd)
+{
+	pthread_t id;
+	pthread_create(&id, NULL, fun_, (void *)fd);
+}
+void Division(char *name,char *buff)
+{
+	int len = strlen(name);
+	for (int i = 0,j = 0; i < len; i++)
+	{
+		if (name[i] == ' ')
+		{
+			strcpy(buff, &name[++i]);
+			break;
+		}
+	}
+	for (int i = 0; i < strlen(buff); i++)
+	{
+		if (buff[i] == ' ')
+		{
+			buff[i] = '\0';
+			break;
+		}
+	}
+	int i = len - 1,j = 0;
+	for (; name[i] != ' '; i--);
+	i++;
+	for (; name[i] != '\0'; j++,i++)
+	{
+		name[j] = name[i];
+	}
+	name[j] = '\0';
+}
+void fun2(char *name,char *buff)
+{
+	int i = strlen(name)-1,j = 0;
+	for (; name[i] != '/'; i--);
+	for (i = i + 1; name[i] != '\0'; i++, j++)
+		buff[j] = name[i];
+	buff[j] = '\0';
+}
+void fun1(int fd,char* name)
+{
+	Json::Value response;
+	char buff[100] = { 0 };
+	char mesg[200] = "send ";
+	char buff2[100] = " to you";
+	char fileRoute[100] = { 0 };
+	char filename[100] = { 0 };
+	Division(name, fileRoute);
+	memset(recvName_,0,100);
+	strcpy(recvName_,name);
+	fr = open(fileRoute,O_RDONLY);
+	assert(fr!= -1);
+	fun2(fileRoute, filename);
+	strcat(strcat(mesg, filename), buff2);
+	struct stat st;
+	lstat(fileRoute,&st);
+	response["msgtype"] = MSG_TYPE_TALK;
+	response["select"] = 1;
+	response["state"] = 0;
+	response["name"] = name;
+	response["message"] = mesg;
+	response["size"] = (int)st.st_size;
+	size = (int)st.st_size;
+	send(fd, response.toStyledString().c_str(),
+		1024, 0);
+}
+
+void ChatView::fun(int fd)
+{
+	threadDoing_(fd);
+	Json::Value response;
+	char str[] = "send to ";
+	char str1[] = "Send ";
+	findvecChat();
+	findve();
+
+	while(1)
+	{
+		char name[500] = { 0 };
+		fflush(stdin); 
+		memset(name,0,500);
+		fgets(name,127,stdin);
+		name[strlen(name)-1] = '\0';
+		cout << endl;
+		if(strncmp(name,str,strlen(str)) == 0)
+			talkFriend(fd,name);
+		else if(strncmp(name,str1,strlen(str1)) == 0)
+			fun1(fd,name);
+		else if(strcmp(name,"exit") == 0)
+				break;
+		else if(strcmp(name,"1") == 0)
+		{
+			response["msgtype"] = MSG_TYPE_TALK;
+			response["select"] = 1;
+			response["state"] = 1;
+			response["name"] = recvName;
+			response["ack"] = 1;
+			send(fd, response.toStyledString().c_str(),1024, 0);
+			memset(recvName,0,100);
+		}
+		else if(strcmp(name,"0") == 0)
+		{
+			response["msgtype"] = MSG_TYPE_TALK;
+			response["select"] = 1;
+			response["state"] = 1;
+			response["name"] = recvName;
+			response["ack"] = 0;
+			send(fd, response.toStyledString().c_str(),1024, 0);
+			memset(recvName,0,100);
+		}
+		else if(strcmp(name,"online") == 0)
+		{
+			response["msgtype"] = MSG_TYPE_TALK;
+			response["select"] = 2;
+			send(fd, response.toStyledString().c_str(),1024, 0);
+		}
+		else if(strcmp(name,"all") == 0)
+		{
+			response["msgtype"] = MSG_TYPE_TALK;
+			response["select"] = 3;
+			send(fd, response.toStyledString().c_str(),1024, 0);
+		}
+		else if(strncmp(name,"[",1) == 0)
+		{
+			talkgroup(fd, name);			
+		}
+		else
+			continue;
+		memset(name,0,500);
+	}
+}
+
+
+

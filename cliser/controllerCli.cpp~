@@ -1,0 +1,91 @@
+#include "controllerCli.h"
+void *fun(void* arg)
+{
+	int fd = (int)arg;
+	char buff[1024] = { 0 };
+	string message;
+	string name;
+	Json::Reader reader;
+	Json::Value root;
+	int type = 0;
+	while(1)
+	{
+		recv(fd,buff,1024,0);
+		if (reader.parse(buff, root))
+		{
+			type = root["type"].asInt();
+			if(type == 1)
+			{
+			message = root["message"].asString();
+			name = root["name"].asString();
+			sem_wait(&sem1);
+			vecChat.push(make_pair(name,message));
+			sem_post(&sem1);
+			}
+			
+		}
+		message.clear();name.clear();
+		memset(buff,0,1024);
+		if(signch == 1)
+			break;
+	}
+}
+void *threadDoing(int fd)
+{
+	pthread_t id;
+	pthread_create(&id, NULL, fun, (void *)fd);
+}
+
+void controllerCli::run(int sockfd)
+{
+	sem_init(&sem1,0,1);
+	while (1)
+	{
+		char signmesg[1024] = { 0 };
+		int endsign = 0;
+		cout << "***********Controller**********" << endl;
+		cout << "1.chat         2.query   3.file" <<endl; 
+		cout << "4.add_friends  5.group   6.exit" << endl;
+		cout << "*******************************" << endl;
+		threadDoing(sockfd);
+		if(vecChat.size() != 0)
+			cout<<" You have new news " << endl;
+		int select;
+		cout << "Please enter your selection:";
+		fflush(stdout);
+		while(1)
+		{
+			fflush(stdin);
+			cin >> select;
+			if(select < 1 || select > 6)
+			{
+				cout << "wrong input parameter!"<<endl;
+				cout << "Please re-enter:";
+				fflush(stdout);
+			}
+			else break;
+		}
+			switch (select)
+			{
+			case 1:
+				signch = 1;
+				_ChatView.run(sockfd);
+				_ChatView.fun(sockfd);
+				signch = 0;
+			case 2:
+			case 3:
+			case 4:
+			case 5:
+			case 6:
+				endsign = 1;
+				break;
+			default:
+				   break;
+			}
+		if(endsign == 1)
+		{
+			endsign = 0;
+			break;
+		}
+	}
+}

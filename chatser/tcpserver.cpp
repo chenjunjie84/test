@@ -1,0 +1,236 @@
+#include "tcpserver.h"
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <assert.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <event.h>
+#include <iostream>
+#include <string>
+#include <json/json.h>
+#include "controller.h"
+#include "public.h"
+#include<event.h>
+#include<semaphore.h>
+using namespace std;
+//=========================================================
+Controller gController[CPU_NUM];
+map<int, struct event*> gEventMap;
+map<int, struct event_base*> baseMap;
+map<int, pair<Controller, int> >countMap;
+pthread_t id[CPU_NUM];
+sem_t sem;
+
+//=========================================================
+void client_cb(int fd, short event, void *lparg)
+{
+	char buffer[1024];
+	int size = 0;
+	int readpipe = ((int*)lparg)[1];
+
+	if (readpipe == fd) //管道有读事件发生，有新用户链接
+	{
+		int clientfd = 0;
+		read(readpipe, (void*)&clientfd, sizeof(int));
+		struct event *client_event = event_new(baseMap[readpipe], clientfd,
+			EV_READ | EV_PERSIST, client_cb, lparg);
+		gEventMap.insert(make_pair(clientfd, client_event));
+		//把event事件放到reactor中
+		event_add(client_event, NULL);
+	}
+	else //有用户的请求需要处理
+	{
+	//	Controller gController = countMap[readpipe].first;
+		size = recv(fd, buffer, 1024, 0);
+		cout << "buffer:" << buffer << endl;
+		if (size <= 0)
+		{
+			event_free(gEventMap[fd]);
+			gEventMap.erase(fd);
+			close(fd);
+			--countMap[readpipe].second;
+			//删除无效断开的fd
+			cerr << "client shutdowm exception! errno:" << errno << endl;
+
+			countMap[((int*)lparg)[1]].first./*gController.*/process("client_close_exception", fd);
+			return;
+		}
+
+		//客户端正常下线消息，需要把该用户的fd从libevent中去掉，防止libevent出错!
+		//如果用户请求下线，那么把该用户的fd从libevent和map表里面删除！
+		//bugreport：此处若不处理，用户上次通过exit退出，会导致下次登录时无法进入主界面
+		Json::Reader reader;
+		Json::Value root;
+		if (reader.parse(buffer, root))
+		{
+			if (root["msgtype"].asInt() == MSG_TYPE_EXIT)
+			{
+				event_free(gEventMap[fd]);
+				gEventMap.erase(fd);
+				--countMap[readpipe].second;
+			}
+		}
+
+		//把json字符串转给controller进行处理
+		countMap[((int*)lparg)[1]].first./*gController.*/process(buffer, fd);
+	}
+}
+////////////////////////////////////////////////////////////////
+int findindex(int pipe)
+{
+	int i = 0;
+	for (map<int, struct event_base*>::iterator it = baseMap.begin(); it != baseMap.end(); ++it,i++)
+	{
+		if(pipe == it->first)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+void* threadProcUserRWEvent(void *lparg)
+{
+	int readpipe = ((int*)lparg)[1];
+
+	struct event_base *base = event_base_new();
+	if (base == NULL)
+	{
+		cout << "child thread libevent init fail! errno:" << errno << endl;
+		exit(-1);
+	}
+	sem_wait(&sem);
+	baseMap.insert(make_pair(((int*)lparg)[1], base));
+	//创建管道读端监听事件
+	countMap.insert(make_pair(((int*)lparg)[1],make_pair(gController[findindex(((int*)lparg)[1])], 0)));
+	sem_post(&sem);
+	struct event *pipe_read_event = event_new(base, ((int*)lparg)[1],
+		EV_READ | EV_PERSIST, client_cb, lparg);
+
+	//添加管道读事件到reactor
+	event_add(pipe_read_event, NULL);
+	//启动子线程反应堆
+	event_base_dispatch(base);
+}
+////////////////////////////////////////////////////////////////
+int get_min(map<int, pair<Controller, int> > countMap)
+{
+	int index = 0, i = 0;
+	int count = (countMap.begin())->second.second;
+	for (map<int, pair<Controller, int> >::iterator it = countMap.begin(); it != countMap.end(); ++it, i++)
+	{
+		if (it->second.second < count)
+		{
+			count = it->second.second;
+			index = i;
+		}
+	}
+	return index;
+}
+
+void listen_cb(int fd, short event, void *lparg)
+{
+	CTcpServer *pserver = (CTcpServer*)lparg;
+	int size[CPU_NUM] = { 0 };
+	struct sockaddr_in client;
+	socklen_t len = sizeof(client);
+	int clientfd = accept(fd, (struct sockaddr*)&client, &len);
+	if (clientfd == -1)
+	{
+		cerr << "accept return invalid! errno:" << errno << endl;
+		return;
+	}
+	cout << "recv new client! ip:" << inet_ntoa(client.sin_addr)
+		<< " port:" << ntohs(client.sin_port) << endl;
+
+
+	//通知子线程处理客户端的读写事件
+	int index = get_min(countMap);
+	write(pserver->sktpr[index][0], (void*)&clientfd, sizeof(int));
+	++countMap[pserver->sktpr[index][1]].second;
+}
+
+//=========================================================
+CTcpServer::CTcpServer(const char *ip, unsigned short port)
+{
+	//创建，绑定，监听fd
+	mListenfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (mListenfd == -1)
+	{
+		cerr << "mListenfd create fail! errno:" << errno << endl;
+		exit(0);
+	}
+
+	struct sockaddr_in server;
+	server.sin_family = AF_INET;
+	server.sin_port = htons(port);
+	server.sin_addr.s_addr = inet_addr(ip);
+
+	if (-1 == bind(mListenfd, (struct sockaddr*)&server, sizeof(server)))
+	{
+		cerr << "mListenfd bind fail! errno:" << errno << endl;
+		exit(0);
+	}
+
+	if (-1 == listen(mListenfd, 20))
+	{
+		cerr << "mListenfd listen fail! errno:" << errno << endl;
+		exit(0);
+	}
+
+	//初始化libevent
+	//创建libevent的reactor
+	mBase = event_base_new();
+	if (mBase == NULL)
+	{
+		cout << "libevent init fail! errno:" << errno << endl;
+		exit(-1);
+	}
+
+	//创建主次线程通信用的管道
+	for (int i = 0; i < CPU_NUM; i++)
+	{
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sktpr[i]) == -1)
+		{
+			printf("create unnamed socket pair failed!\n");
+			exit(-1);
+		}
+	}
+}
+CTcpServer::~CTcpServer()
+{
+	//关闭监听套接字
+	close(mListenfd);
+	//关闭libevent
+	//clean event and reator
+	//event_free(listen_event);
+	event_base_free(mBase);
+}
+void CTcpServer::run()
+{
+	int res = sem_init(&sem, 0, 1);
+	if (res == -1)
+		cout << "sem initializtion failed!" << endl;
+	cout << "start child thread deal user socket read/write event..." << endl;
+	for (int i = 0; i < CPU_NUM; i++)
+		pthread_create(&id[i], NULL, threadProcUserRWEvent, sktpr[i]);
+
+	cout << "server is running..." << endl;
+
+	//创建listenfd的event事件
+	struct event *listen_event = event_new(mBase, mListenfd,
+		EV_READ | EV_PERSIST, listen_cb, this);
+	gEventMap.insert(make_pair(mListenfd, listen_event));
+	//把event事件放到reactor中
+	event_add(listen_event, NULL);
+	//start reator ->   dumplex    loop事件
+	// event   reactor   dumplex   event_handler
+	event_base_dispatch(mBase);
+}
+
+

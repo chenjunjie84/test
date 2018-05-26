@@ -1,0 +1,30 @@
+#ifndef CONTROLLERCLI_H
+#define CONTROLLERCLI_H
+#include <iostream>
+#include <string>
+#include "public.h"
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include "json/json.h"
+#include <pthread.h>
+#include <string.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include "chatMode.h"
+#include <queue>
+#include <utility>
+#include <semaphore.h>
+using namespace std;
+
+class controllerCli
+{
+public:
+	void run(int sockfd);
+private:
+	ChatView _ChatView;
+};
+#endif 
